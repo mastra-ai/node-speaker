@@ -26,6 +26,8 @@ class Speaker extends Writable {
     if (!opts) opts = {}
     if (opts.lowWaterMark == null) opts.lowWaterMark = 0
     if (opts.highWaterMark == null) opts.highWaterMark = 0
+    // emit close manually
+    opts.emitClose = false
 
     super(opts)
 
@@ -41,12 +43,14 @@ class Speaker extends Writable {
     // flipped after close() is called, no write() calls allowed after
     this._closed = false
 
+    // whether native binding is closing
+    this._closing = false
+
     // set PCM format
     this._format(opts)
 
     // bind event listeners
     this._format = this._format.bind(this)
-    this.on('finish', this._flush)
     this.on('pipe', this._pipe)
     this.on('unpipe', this._unpipe)
   }
@@ -253,10 +257,13 @@ class Speaker extends Writable {
    * @api private
    */
 
-  _flush () {
-    debug('_flush()')
+  _final (callback) {
+    debug('_final()')
     this.emit('flush')
-    this.close(false)
+    this._close(false)
+      .then(() => callback())
+      .catch(error => callback(error))
+      .finally(() => debug('_final() end'))
   }
 
   /**
@@ -270,25 +277,40 @@ class Speaker extends Writable {
 
   close (flush) {
     debug('close(%o)', flush)
+    this._close(flush)
+      .catch(console.error)
+      .finally(() => debug('close() end'))
+  }
+
+  /**
+   * Flush audio backend and close backend
+   *
+   * @param {Boolean} flush - if `false`, then don't call the `flush()` native binding call.`.
+   */
+  async _close (flush) {
     if (this._closed) return debug('already closed...')
 
-    if (this.audio_handle) {
-      if (flush !== false) {
-        // TODO: async most likely…
-        debug('invoking flush() native binding')
-        binding.flush(this.audio_handle)
-      }
-
-      // TODO: async maybe?
-      debug('invoking close() native binding')
-      binding.close(this.audio_handle)
-      this.audio_handle = null
-    } else {
+    if (!this.audio_handle) {
       debug('not invoking flush() or close() bindings since no `audio_handle`')
+      this._closed = true
+      this.emit('close')
+      return
     }
 
-    this._closed = true
-    this.emit('close')
+    if (flush !== false) {
+      debug('invoking flush() native binding')
+      await binding.flush(this.audio_handle)
+    }
+
+    if (!this._closing) {
+      this._closing = true
+      debug('invoking close() native binding')
+      await binding.close(this.audio_handle)
+      this.audio_handle = null
+      this._closed = true
+      this.emit('close')
+      debug('closed')
+    }
   }
 }
 
