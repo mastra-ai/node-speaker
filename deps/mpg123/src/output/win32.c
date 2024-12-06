@@ -223,9 +223,6 @@ static void flush_win32(struct audio_output_struct *ao)
     /* If WHDR_PREPARED is not set, this is (potentially) a partial buffer */
     if (!(hdr->dwFlags & WHDR_PREPARED))
     hdr->dwBufferLength = 0;
-
-    /* Finish processing the buffers */
-    drain_win32(ao);
 }
 
 /* output final buffer (if any) */

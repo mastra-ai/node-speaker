@@ -25,6 +25,19 @@ typedef struct {
   napi_deferred deferred;
 } WriteData;
 
+typedef struct {
+  audio_output_t *ao;
+  napi_deferred deferred;
+  napi_async_work work;
+} FlushData;
+
+typedef struct {
+  audio_output_t *ao;
+  int error;
+  napi_deferred deferred;
+  napi_async_work work;
+} CloseData;
+
 bool is_string(napi_env env, napi_value value) {
   napi_valuetype valuetype;
   assert(napi_typeof(env, value, &valuetype) == napi_ok);
@@ -126,6 +139,20 @@ napi_value speaker_write(napi_env env, napi_callback_info info) {
   return promise;
 }
 
+void flush_execute(napi_env env, void* _data) {
+  FlushData* data = _data;
+  data->ao->flush(data->ao);
+}
+
+void flush_complete(napi_env env, napi_status status, void* _data) {
+  FlushData* data = _data;
+  napi_value undefined;
+  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  assert(napi_resolve_deferred(env, data->deferred, undefined) == napi_ok);
+  assert(napi_delete_async_work(env, data->work) == napi_ok);
+  free(_data);
+}
+
 napi_value speaker_flush(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -135,9 +162,47 @@ napi_value speaker_flush(napi_env env, napi_callback_info info) {
   assert(napi_unwrap(env, args[0], (void**) &speaker) == napi_ok);
   audio_output_t *ao = &speaker->ao;
 
-  /* TODO: async */
-  ao->flush(ao);
-  return NULL;
+  napi_value promise;
+  FlushData* data = malloc(sizeof(FlushData));
+  data->ao = ao;
+  assert(napi_create_promise(env, &data->deferred, &promise) == napi_ok);
+
+  napi_value work_name;
+  assert(napi_create_string_utf8(env, "speaker:flush", NAPI_AUTO_LENGTH, &work_name) == napi_ok);
+  assert(napi_create_async_work(env, NULL, work_name, flush_execute, flush_complete, (void*) data, &data->work) == napi_ok);
+  assert(napi_queue_async_work(env, data->work) == napi_ok);
+
+  return promise;
+}
+
+void close_execute(napi_env env, void* _data) {
+  CloseData* data = _data;
+  int r = data->ao->close(data->ao);
+  if (r != 0) {
+    data->error = 1;
+    return;
+  }
+  if (data->ao->deinit) {
+    int r = data->ao->deinit(data->ao);
+    if (r != 0) {
+      data->error = 1;
+    }
+  }
+}
+
+void close_complete(napi_env env, napi_status status, void* _data) {
+  CloseData* data = _data;
+  if (data->error == 0) {
+    napi_value undefined;
+    assert(napi_get_undefined(env, &undefined) == napi_ok);
+    assert(napi_resolve_deferred(env, data->deferred, undefined) == napi_ok);
+  } else {
+    napi_value error;
+    assert(napi_create_string_utf8(env, "Close failed", NAPI_AUTO_LENGTH, &error) == napi_ok);
+    assert(napi_reject_deferred(env, data->deferred, error) == napi_ok);
+  }
+  assert(napi_delete_async_work(env, data->work) == napi_ok);
+  free(_data);
 }
 
 napi_value speaker_close(napi_env env, napi_callback_info info) {
@@ -149,25 +214,18 @@ napi_value speaker_close(napi_env env, napi_callback_info info) {
   assert(napi_unwrap(env, args[0], (void**) &speaker) == napi_ok);
   audio_output_t *ao = &speaker->ao;
 
-  int r = ao->close(ao);
+  napi_value promise;
+  CloseData* data = malloc(sizeof(CloseData));
+  data->ao = ao;
+  data->error = 0;
+  assert(napi_create_promise(env, &data->deferred, &promise) == napi_ok);
 
-  if (r != 0) {
-    napi_throw_error(env, "ERR_CLOSE", "Failed to initialize output device");
-    goto cleanup;
-  }
+  napi_value work_name;
+  assert(napi_create_string_utf8(env, "speaker:close", NAPI_AUTO_LENGTH, &work_name) == napi_ok);
+  assert(napi_create_async_work(env, NULL, work_name, close_execute, close_complete, (void*) data, &data->work) == napi_ok);
+  assert(napi_queue_async_work(env, data->work) == napi_ok);
 
-  if (ao->deinit) {
-    int r = ao->deinit(ao);
-
-    if (r != 0) {
-      napi_throw_error(env, "ERR_CLOSE", "Failed to initialize output device");
-      goto cleanup;
-    }
-  }
-
-cleanup:
-  free(speaker->device);
-  return NULL;
+  return promise;
 }
 
 int get_formats() {
