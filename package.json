@@ -1,10 +1,17 @@
 {
-  "name": "speaker",
-  "version": "0.5.5",
+  "name": "@mastra/node-speaker",
+  "version": "0.1.0",
   "license": "(MIT AND LGPL-2.1-only)",
-  "description": "Output PCM audio data to the speakers",
+  "description": "Output PCM audio data to the speakers - Fork with CoreAudio buffer underflow fixes",
   "author": "Nathan Rajlich <nathan@tootallnate.net> (http://tootallnate.net)",
-  "repository": "TooTallNate/node-speaker",
+  "contributors": [
+    "Jason Benn (https://github.com/JasonBenn)",
+    "Mastra AI (https://github.com/mastra-ai)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mastra-ai/node-speaker"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
